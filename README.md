@@ -15,9 +15,11 @@
 | `PORT` | | `3000` | 서버 포트 |
 | `HOST` | | `localhost` | 바인딩 호스트 |
 | `RAMEN_ADMIN_PASSWORD` | | – | 설정 시 포스트·리비전 등 관리자 API에 `Authorization: Bearer <비밀번호>` 헤더 필요. 앱에서 블로그 연결 시 같은 비밀번호를 입력하면 됨 |
-| `CORS_ORIGIN` | | `http://localhost:5173,http://localhost:1420,http://localhost:4321` | 쉼표로 구분된 허용 오리진. credentials 사용 시 필요 |
+| `CORS_ORIGIN` | | 로컬 개발용 3종[^1] | 쉼표로 구분된 허용 오리진. credentials 사용 시 필요 |
 | `UPLOADS_DIR` | | `./uploads` | 업로드 이미지 저장 경로. Docker/k8s에서는 볼륨을 마운트해 영속화해야 함 |
 | `WEB_DIST_DIR` | | – | 웹 빌드 정적 서빙 경로 (Docker 등 단일 이미지 배포 시) |
+
+[^1]: `http://localhost:5173,http://localhost:1420,http://localhost:4321`
 
 ## 주요 API
 
@@ -59,15 +61,3 @@
 | POST | `/api/uploads` | 이미지 업로드 (png/jpeg/gif/webp/svg, 최대 8MB) | ✅ |
 
 업로드된 이미지는 `/uploads`에서 정적으로 서빙됩니다.
-
-## 레거시
-
-- `data/`, `_replicator/`, `_users/` 폴더는 이전 RxDB 파일시스템 저장소의 잔여물이며 현재 서버는 사용하지 않습니다.
-
-## 참고 문서
-
-- [docs/MIGRATE-POSTGRESQL.md](../docs/MIGRATE-POSTGRESQL.md) — 마이그레이션 인덱스
-- [docs/migrate/01-schema.md](../docs/migrate/01-schema.md) — PostgreSQL 서버 스키마, PGlite 클라이언트 스키마
-- [docs/migrate/02-sync.md](../docs/migrate/02-sync.md) — checkpoint 기반 REST sync 구현
-- [docs/migrate/04-files-packages.md](../docs/migrate/04-files-packages.md) — 수정/삭제/추가 파일 목록, bun 패키지 변경
-- [docs/migrate/05-migration-steps.md](../docs/migrate/05-migration-steps.md) — 단계별 작업 순서, 주의사항
