@@ -1,39 +1,60 @@
-import { Database } from "bun:sqlite";
-import { join } from "path";
+/**
+ * PostgreSQL connection and document types (formerly rxdb.ts).
+ */
+import postgres from "postgres";
 
-const dbPath = process.env.SQLITE_PATH || join(process.cwd(), "ramen.db");
-export const db = new Database(dbPath);
+const connectionString = process.env.DATABASE_URL?.trim();
+if (!connectionString) {
+  throw new Error("DATABASE_URL must be set for the ramen server (PostgreSQL).");
+}
 
-db.run(`
-  CREATE TABLE IF NOT EXISTS posts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    slug TEXT UNIQUE NOT NULL,
-    title TEXT NOT NULL DEFAULT '',
-    body_md TEXT DEFAULT '',
-    published INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
+export const sql = postgres(connectionString, { max: 10 });
 
-  CREATE TABLE IF NOT EXISTS comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    user_id TEXT DEFAULT NULL,
-    start_anchor TEXT DEFAULT NULL,
-    end_anchor TEXT DEFAULT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (post_id) REFERENCES posts(id)
-  );
+/** 앱 전역 설정 key-value 저장소 (예: project-tag). 없으면 생성. */
+export async function ensureSchema(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+}
 
-  CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id);
+export type PostDoc = {
+  id: string;
+  type: "post";
+  slug: string;
+  title: string;
+  body_md: string;
+  published: number;
+  tags: string;
+  category: string;
+  banner?: string | null;
+  description?: string | null;
+  deleted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
-  CREATE TABLE IF NOT EXISTS post_revisions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id INTEGER NOT NULL,
-    body_md TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (post_id) REFERENCES posts(id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_revisions_post_id ON post_revisions(post_id);
-`);
+export type CommentDoc = {
+  id: string;
+  type: "comment";
+  post_slug: string;
+  content: string;
+  user_id: string | null;
+  start_anchor: number | null;
+  end_anchor: number | null;
+  created_at: string;
+  referenced_snippet?: string | null;
+  referenced_text?: string | null;
+  password_hash?: string | null;
+};
+
+export type RevisionDoc = {
+  id: string;
+  type: "revision";
+  post_slug: string;
+  body_md: string;
+  created_at: string;
+};

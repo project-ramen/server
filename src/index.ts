@@ -1,130 +1,85 @@
 /**
- * Ramen Blog server: HTTP API (posts, comments) + WebSocket (Yjs sync).
+ * Ramen Blog server: HTTP API (posts, comments) + PostgreSQL.
  * - HTTP: http://host:port/api/...
- * - WebSocket: ws://host:port/ws?room=POST_ID
+ * - Post sync: POST http://host:port/api/sync/posts
+ * When WEB_DIST_DIR is set (e.g. in Docker), also serves static web build at /.
  */
-import { createServer } from "http";
-import { WebSocketServer } from "ws";
-import * as Y from "yjs";
-import { getDoc } from "./rooms.js";
-import { addEditor, removeEditor } from "./liveRooms.js";
-import api from "./api.js";
-
-// DB init (must run before API)
-import "./db.js";
+import http from "node:http";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { existsSync, mkdirSync } from "node:fs";
+import cors from "cors";
+import express from "express";
+import { createApi } from "./api.js";
+import { ensureSchema } from "./db.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "localhost";
+/** Comma-separated; required when client sends credentials (no '*'). 4321 = Astro dev. */
+const CORS_ORIGINS = (process.env.CORS_ORIGIN || "http://localhost:5173,http://localhost:1420,http://localhost:4321")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-const httpServer = createServer(api);
+/** 배포 시 설정. 설정 시 포스트·리비전 등 관리자 API에 Authorization: Bearer <값> 필요. */
+const ADMIN_PASSWORD = process.env.RAMEN_ADMIN_PASSWORD?.trim() || undefined;
+/** 업로드된 이미지 저장 위치. Docker/k8s에서는 볼륨을 마운트해 영속화해야 함. */
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
 
-const wss = new WebSocketServer({ noServer: true });
-const roomClients = new Map<string, Set<WebSocket>>();
-
-function getRoomFromUrl(url: string): { roomId: string; isEditor: boolean } {
-  try {
-    const u = new URL(url, `http://${HOST}`);
-    const roomId = u.searchParams.get("room") || "default";
-    const isEditor = u.searchParams.get("editor") === "1";
-    return { roomId, isEditor };
-  } catch {
-    return { roomId: "default", isEditor: false };
-  }
-}
-
-function addToRoom(roomId: string, ws: WebSocket): void {
-  if (!roomClients.has(roomId)) roomClients.set(roomId, new Set());
-  roomClients.get(roomId)!.add(ws);
-}
-
-function removeFromRoom(roomId: string, ws: WebSocket): void {
-  roomClients.get(roomId)?.delete(ws);
-}
-
-function broadcastToRoom(roomId: string, data: Buffer | Uint8Array, exclude?: WebSocket): void {
-  const clients = roomClients.get(roomId);
-  if (!clients) return;
-  const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  for (const client of clients) {
-    if (client !== exclude && client.readyState === 1) {
-      client.send(payload, { binary: true });
+(async () => {
+  process.on("warning", (warning) => {
+    if (warning.name === "MaxListenersExceededWarning") {
+      console.warn("[ramen] listener warning:", warning.message);
+      if (warning.stack) console.warn(warning.stack);
     }
-  }
-}
-
-function broadcastAwarenessToRoom(roomId: string, data: string): void {
-  const clients = roomClients.get(roomId);
-  if (!clients) return;
-  for (const client of clients) {
-    if (client.readyState === 1) client.send(data);
-  }
-}
-
-httpServer.on("upgrade", (req, socket, head) => {
-  const path = req.url?.split("?")[0];
-  if (path !== "/ws") {
-    socket.destroy();
-    return;
-  }
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit("connection", ws, req);
   });
-});
 
-wss.on("connection", (ws, req) => {
-  const { roomId, isEditor } = getRoomFromUrl(req.url || "");
-  (ws as WebSocket & { _roomId?: string; _isEditor?: boolean })._roomId = roomId;
-  (ws as WebSocket & { _roomId?: string; _isEditor?: boolean })._isEditor = isEditor;
-  addToRoom(roomId, ws);
-  if (isEditor) addEditor(roomId);
+  await ensureSchema();
+  mkdirSync(UPLOADS_DIR, { recursive: true });
 
-  const doc = getDoc(roomId);
-  const state = Y.encodeStateAsUpdate(doc);
-  if (state.length > 0) {
-    ws.send(state, { binary: true });
-  }
+  const app = createApi({
+    corsOrigins: CORS_ORIGINS,
+    adminPassword: ADMIN_PASSWORD,
+    uploadsDir: UPLOADS_DIR,
+  });
+  app.use("/uploads", express.static(UPLOADS_DIR));
 
-  ws.on("message", (raw: Buffer | string) => {
-    let awarenessStr: string | null = null;
-    if (typeof raw === "string") {
-      awarenessStr = raw;
-    } else if (Buffer.isBuffer(raw)) {
-      try {
-        awarenessStr = raw.toString("utf8");
-      } catch (_) {
-        awarenessStr = null;
+  const server = http.createServer(app);
+
+  server.on("connection", (socket) => {
+    if (process.env.RAMEN_DEBUG_TCP !== "1") return;
+    const addr = `${socket.remoteAddress}:${socket.remotePort}`;
+    console.log(`[ramen] tcp open  ${addr}`);
+    socket.once("close", () => {
+      console.log(`[ramen] tcp close ${addr} (close-listeners=${socket.listenerCount("close")})`);
+    });
+  });
+
+  // Serve web: SSR handler when web build has server/entry.mjs, else static + index.html fallback.
+  const webDistDir = process.env.WEB_DIST_DIR || path.join(process.cwd(), "web-dist");
+  const serverEntry = path.join(webDistDir, "server", "entry.mjs");
+  if (existsSync(webDistDir)) {
+    if (existsSync(serverEntry)) {
+      const clientDir = path.join(webDistDir, "client");
+      if (existsSync(clientDir)) {
+        app.use(express.static(clientDir));
       }
+      const { handler: ssrHandler } = await import(pathToFileURL(serverEntry).href);
+      app.use((req, res, next) => {
+        if (req.path.startsWith("/api")) return next();
+        (ssrHandler as (req: express.Request, res: express.Response, next: express.NextFunction) => void)(req, res, next);
+      });
+    } else {
+      app.use(express.static(webDistDir));
+      app.get("*", (_req, res) => res.sendFile(path.join(webDistDir, "index.html")));
     }
-    if (awarenessStr !== null) {
-      try {
-        const msg = JSON.parse(awarenessStr) as { type?: string; data?: number[] };
-        if (msg.type === "awareness" && Array.isArray(msg.data)) {
-          broadcastAwarenessToRoom(roomId, awarenessStr);
-          return;
-        }
-      } catch (_) {
-        // not JSON or not awareness — fall through to binary
-      }
-    }
-    if (typeof raw === "string") return;
-    if (!Buffer.isBuffer(raw) && !(raw instanceof Uint8Array)) return;
-    const update = new Uint8Array(raw);
-    try {
-      Y.applyUpdate(doc, update);
-      broadcastToRoom(roomId, update, ws as WebSocket);
-    } catch (_) {
-      // ignore
-    }
-  });
+  }
 
-  ws.on("close", () => {
-    const w = ws as WebSocket & { _roomId?: string; _isEditor?: boolean };
-    if (w._isEditor && w._roomId) removeEditor(w._roomId);
-    removeFromRoom(roomId, ws as WebSocket);
+  server.listen(PORT, HOST, () => {
+    console.log("[ramen] API http://" + HOST + ":" + PORT + "/api");
+    console.log("[ramen] Post sync POST http://" + HOST + ":" + PORT + "/api/sync/posts");
   });
-});
-
-httpServer.listen(PORT, HOST, () => {
-  console.log(`[ramen] API http://${HOST}:${PORT}/api`);
-  console.log(`[ramen] WebSocket ws://${HOST}:${PORT}/ws?room=POST_ID`);
+})().catch((e) => {
+  console.error("[ramen] Startup failed:", e);
+  process.exit(1);
 });

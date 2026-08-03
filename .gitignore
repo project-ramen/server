@@ -3,3 +3,7 @@ bun.lockb
 .env
 *.log
 *.db
+
+_replicator/
+_users/
+data/
