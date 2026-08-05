@@ -76,6 +76,7 @@ function rowToPostDoc(row: Record<string, unknown>): PostDoc {
     tags,
     category,
     banner: row.banner != null ? String(row.banner) : null,
+    banner_url: row.banner_url != null ? String(row.banner_url) : null,
     description: row.description != null ? String(row.description) : null,
     deleted_at: deletedRaw != null && deletedRaw !== "" ? iso(deletedRaw as Date | string) : null,
     created_at: iso(row.created_at as Date | string),
@@ -118,6 +119,7 @@ export function createApi(options: CreateApiOptions): express.Express {
       tags: doc.tags ?? "[]",
       category: doc.category ?? "[]",
       banner: doc.banner ?? null,
+      banner_url: doc.banner_url ?? null,
       description: doc.description ?? null,
       deleted_at: doc.deleted_at ?? null,
     };
@@ -183,10 +185,11 @@ export function createApi(options: CreateApiOptions): express.Express {
               ? deletedRaw
               : null;
         const banner = typeof doc.banner === "string" && doc.banner.trim() ? doc.banner : null;
+        const bannerUrl = typeof doc.banner_url === "string" && doc.banner_url.trim() ? doc.banner_url : null;
         const description = typeof doc.description === "string" && doc.description.trim() ? doc.description : null;
 
         await sql`
-          INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, description, deleted_at, created_at, updated_at)
+          INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, banner_url, description, deleted_at, created_at, updated_at)
           VALUES (
             ${id},
             'post',
@@ -197,6 +200,7 @@ export function createApi(options: CreateApiOptions): express.Express {
             ${sql.json(tags as JSONValue)},
             ${sql.json(category as JSONValue)},
             ${banner},
+            ${bannerUrl},
             ${description},
             ${deleted_at},
             ${created_at}::timestamptz,
@@ -209,6 +213,7 @@ export function createApi(options: CreateApiOptions): express.Express {
             tags        = EXCLUDED.tags,
             category    = EXCLUDED.category,
             banner      = EXCLUDED.banner,
+            banner_url  = EXCLUDED.banner_url,
             description = EXCLUDED.description,
             deleted_at  = EXCLUDED.deleted_at,
             updated_at  = EXCLUDED.updated_at
@@ -384,15 +389,16 @@ export function createApi(options: CreateApiOptions): express.Express {
 
   app.post("/api/posts", adminAuth, async (req, res) => {
     try {
-      const { slug, title, body_md, published, tags, banner, description } = req.body;
+      const { slug, title, body_md, published, tags, banner, banner_url, description } = req.body;
       if (!slug || !title) return res.status(400).json({ error: "slug and title required" });
       const tagsJson = Array.isArray(tags) ? JSON.stringify(tags.filter((t: unknown) => typeof t === "string")) : "[]";
       const now = new Date().toISOString();
       const tagsParsed = JSON.parse(tagsJson);
       const bannerVal = typeof banner === "string" && banner.trim() ? banner : null;
+      const bannerUrlVal = typeof banner_url === "string" && banner_url.trim() ? banner_url : null;
       const descriptionVal = typeof description === "string" && description.trim() ? description : null;
       await sql`
-        INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, description, created_at, updated_at)
+        INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, banner_url, description, created_at, updated_at)
         VALUES (
           ${postId(slug)},
           'post',
@@ -403,6 +409,7 @@ export function createApi(options: CreateApiOptions): express.Express {
           ${sql.json(tagsParsed)},
           ${sql.json([])},
           ${bannerVal},
+          ${bannerUrlVal},
           ${descriptionVal},
           ${now}::timestamptz,
           ${now}::timestamptz
@@ -413,6 +420,7 @@ export function createApi(options: CreateApiOptions): express.Express {
           published = EXCLUDED.published,
           tags = EXCLUDED.tags,
           banner = EXCLUDED.banner,
+          banner_url = EXCLUDED.banner_url,
           description = EXCLUDED.description,
           updated_at = EXCLUDED.updated_at
       `;
@@ -458,7 +466,7 @@ export function createApi(options: CreateApiOptions): express.Express {
 
         await sql.begin(async (t) => {
           await t`
-            INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, description, deleted_at, created_at, updated_at)
+            INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, banner_url, description, deleted_at, created_at, updated_at)
             VALUES (
               ${postId(newSlug)},
               'post',
@@ -469,6 +477,7 @@ export function createApi(options: CreateApiOptions): express.Express {
               ${t.json(JSON.parse(oldDoc.tags || "[]") as JSONValue)},
               ${t.json(categoryParsed as JSONValue)},
               ${oldDoc.banner ?? null},
+              ${oldDoc.banner_url ?? null},
               ${oldDoc.description ?? null},
               ${oldDoc.deleted_at ?? null},
               ${oldDoc.created_at},
@@ -505,7 +514,7 @@ export function createApi(options: CreateApiOptions): express.Express {
 
   app.post("/api/posts/ensure", adminAuth, async (req, res) => {
     try {
-      const { slug, title, body_md, published, tags, category, banner, description } = req.body;
+      const { slug, title, body_md, published, tags, category, banner, banner_url, description } = req.body;
       if (!slug || typeof slug !== "string") return res.status(400).json({ error: "slug required" });
       const titleStr = title != null ? String(title) : slug;
       const bodyStr = body_md != null ? String(body_md) : "";
@@ -513,10 +522,11 @@ export function createApi(options: CreateApiOptions): express.Express {
       const tagsJson = Array.isArray(tags) ? JSON.stringify(tags.filter((t: unknown) => typeof t === "string")) : "[]";
       const categoryJson = Array.isArray(category) ? JSON.stringify(category.filter((c: unknown) => typeof c === "string")) : "[]";
       const bannerVal = typeof banner === "string" && banner.trim() ? banner : null;
+      const bannerUrlVal = typeof banner_url === "string" && banner_url.trim() ? banner_url : null;
       const descriptionVal = typeof description === "string" && description.trim() ? description : null;
       const now = new Date().toISOString();
       await sql`
-        INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, description, created_at, updated_at)
+        INSERT INTO posts (id, type, slug, title, body_md, published, tags, category, banner, banner_url, description, created_at, updated_at)
         VALUES (
           ${postId(slug)},
           'post',
@@ -527,6 +537,7 @@ export function createApi(options: CreateApiOptions): express.Express {
           ${sql.json(JSON.parse(tagsJson))},
           ${sql.json(JSON.parse(categoryJson))},
           ${bannerVal},
+          ${bannerUrlVal},
           ${descriptionVal},
           ${now}::timestamptz,
           ${now}::timestamptz
@@ -538,6 +549,7 @@ export function createApi(options: CreateApiOptions): express.Express {
           tags = EXCLUDED.tags,
           category = EXCLUDED.category,
           banner = EXCLUDED.banner,
+          banner_url = EXCLUDED.banner_url,
           description = EXCLUDED.description,
           updated_at = EXCLUDED.updated_at
       `;

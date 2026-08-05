@@ -31,6 +31,7 @@ export type PostDoc = {
   tags: string;
   category: string;
   banner?: string | null;
+  banner_url?: string | null;
   description?: string | null;
   deleted_at?: string | null;
   created_at: string;
