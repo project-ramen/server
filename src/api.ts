@@ -308,6 +308,9 @@ export function createApi(options: CreateApiOptions): express.Express {
   });
 
   app.get("/api/posts", async (_req, res) => {
+    // published 상태가 바뀐 직후에도 항상 최신 목록을 받도록 캐시 금지
+    // (위키링크 해석용 usePostLinkIndex가 이 목록을 신뢰하고 링크 여부를 결정함)
+    res.set("Cache-Control", "no-store");
     try {
       const projectTag = await getProjectTag();
       const out = await fetchPublishedPostRows();
@@ -321,6 +324,7 @@ export function createApi(options: CreateApiOptions): express.Express {
   });
 
   app.get("/api/posts/projects", async (_req, res) => {
+    res.set("Cache-Control", "no-store");
     try {
       const projectTag = await getProjectTag();
       if (!projectTag) return res.json([]);
